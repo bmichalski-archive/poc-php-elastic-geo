@@ -2,7 +2,9 @@
 An Elastic / PHP GeoSpatial search POC
 
 Simple test:
-* php geo-indexing-test.php HOST TREE [options]
+<pre>
+    php geo-indexing-test.php HOST TREE [options]
+</pre>
     
 Available TREEs are:
 * quadtree
@@ -21,7 +23,9 @@ Options:
 See usage in multi-geo-indexing-tests.php.
 
 Multiple tests:
-* php multi-geo-indexing-tests.php HOST [options]
+<pre>
+php multi-geo-indexing-tests.php HOST [options]
+</pre>
 
 Options:
 * --port PORT, an integer, the port to use
