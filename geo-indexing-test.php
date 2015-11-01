@@ -60,6 +60,13 @@ $options = [
         null,
         InputOption::VALUE_NONE
     ],
+    [
+        'bulk-size',
+        null,
+        InputOption::VALUE_REQUIRED,
+        '',
+        10
+    ],
 ];
 
 foreach ($options as $option) {
@@ -78,6 +85,7 @@ $main = function () use ($argvInput) {
     $treeLevels = $argvInput->getOption('treeLevels');
     $precision = $argvInput->getOption('precision');
     $tree = $argvInput->getArgument('tree');
+    $bulkSize = $argvInput->getOption('bulk-size');
     
     $tab = $argvInput->getOption('tab');
     
@@ -101,20 +109,24 @@ $main = function () use ($argvInput) {
 
     if (!$tab) {
         echo sprintf(
-            'Starting test on host %s:%s, using index %s and type %s, with tree %s using %s.',
+            'Starting test on host %s:%s, using index %s and type %s, with tree %s using %s, with a bulk size of %s.',
             $host,
             $port,
             $indexName,
             $typeName,
             $tree,
-            isset($treeLevels) ? 'treeLevels '.$treeLevels : 'precision '.$precision
+            isset($treeLevels) ? 'treeLevels '.$treeLevels : 'precision '.$precision,
+            $bulkSize
         ).PHP_EOL;
     }
     
-    $elasticaClient = new Client(array(
-        'host' => $host,
-        'port' => $port
-    ));
+    $elasticaClient = new Client(
+        [
+            'host' => $host,
+            'port' => $port,
+            'timeout' => -1,
+        ]
+    );
 
     $index = $elasticaClient->getIndex($indexName);
     
@@ -165,25 +177,27 @@ $main = function () use ($argvInput) {
     $flush = function () use ($type, &$docs, &$totalFlushed, $tab) {
         $count = count($docs);
 
-        if (!$tab) {
-            echo 'Flushing '.$count.' documents.'.PHP_EOL;
+        if ($count > 0) {
+            if (!$tab) {
+                echo 'Flushing '.$count.' documents.'.PHP_EOL;
+            }
+
+            $type->addDocuments($docs);
+
+            $totalFlushed += $count;
+
+            if (!$tab) {
+                echo 'Total flushed: '.$totalFlushed.' documents.'.PHP_EOL;
+            }
+
+            $docs = [];
         }
-
-        $type->addDocuments($docs);
-
-        $totalFlushed += $count;
-
-        if (!$tab) {
-            echo 'Total flushed: '.$totalFlushed.' documents.'.PHP_EOL;
-        }
-
-        $docs = [];
     };
 
-    $addDoc = function (array $data) use ($flush, &$docs) {
+    $addDoc = function (array $data) use ($flush, &$docs, $bulkSize) {
         $docs[] = new Document('', $data);
 
-        if (count($docs) % 1000 === 0) {
+        if (count($docs) % $bulkSize === 0) {
             $flush();
         }
     };
@@ -207,11 +221,19 @@ $main = function () use ($argvInput) {
     $flush();
 
     $end = microtime(true) - $start;
+    
+    $index->flush(true);
+    
+    sleep(1);
+    
+    $indexSize = $index->getStats()->getData()['indices'][$indexName]['primaries']['store']['size_in_bytes'] / 1024 / 1024;
 
     if (!$tab) {
         echo sprintf(
-            'Done importing in %.4f seconds.',
-            $end
+            'Done importing %d documents in %.4f seconds. Index size is %.2fMb',
+            $totalFlushed,
+            $end,
+            $indexSize
         ).PHP_EOL;
     } else {
         echo implode(
@@ -224,7 +246,10 @@ $main = function () use ($argvInput) {
                 $tree,
                 $treeLevels,
                 $precision,
-                round($end, 4)
+                round($end, 4),
+                $totalFlushed,
+                $bulkSize,
+                $indexSize
             ]
         ).PHP_EOL;
     }

@@ -44,7 +44,6 @@ foreach ($options as $option) {
 }
 
 $precisions = [
-    1,
     10,
     50,
     100,
@@ -58,21 +57,49 @@ $trees = [
     'geohash',
 ];
 
+$bulkSizes = [
+    10,
+    50,
+    100,
+    250,
+    1000,
+];
+
 $argvInput = new ArgvInput($argv, $inputDefinition);
+
+echo implode(
+    "\t",
+    [
+        'host',
+        'port',
+        'indexName',
+        'typeName',
+        'tree',
+        'treeLevels',
+        'precision',
+        'duration',
+        'totalFlushed',
+        'bulkSize',
+        'indexSize'
+    ]
+).PHP_EOL;
 
 foreach ($trees as $tree) {
     foreach ($precisions as $precision) {
-        passthru(
-            sprintf(
-                'php %s %s %s --port %s --index %s --type %s --precision %s --tab',
-                __DIR__.'/geo-indexing-test.php',
-                $argvInput->getArgument('host'),
-                $tree,
-                $argvInput->getOption('port'),
-                $argvInput->getOption('index'),
-                $argvInput->getOption('type'),
-                $precision
-            )
-        );
+        foreach ($bulkSizes as $bulkSize) {
+            passthru(
+                sprintf(
+                    'php %s %s %s --port %s --index %s --type %s --precision %s --tab --bulk-size %s',
+                    __DIR__.'/geo-indexing-test.php',
+                    $argvInput->getArgument('host'),
+                    $tree,
+                    $argvInput->getOption('port'),
+                    $argvInput->getOption('index'),
+                    $argvInput->getOption('type'),
+                    $precision,
+                    $bulkSize
+                )
+            );
+        }
     }
 }
