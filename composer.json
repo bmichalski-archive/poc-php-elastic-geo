@@ -1,0 +1,8 @@
+{
+    "name": "bmichalski",
+    "require": {
+        "ruflin/elastica": "~2.3",
+        "symfony/finder": "~2.7",
+        "symfony/console": "~2.7"
+    }
+}
