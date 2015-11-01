@@ -55,6 +55,11 @@ $options = [
         '',
         null
     ],
+    [
+        'tab',
+        null,
+        InputOption::VALUE_NONE
+    ],
 ];
 
 foreach ($options as $option) {
@@ -68,11 +73,13 @@ $argvInput = new ArgvInput($argv, $inputDefinition);
 $main = function () use ($argvInput) {
     $host = $argvInput->getArgument('host');
     $port = $argvInput->getOption('port');
-    $index = $argvInput->getOption('index');
-    $type = $argvInput->getOption('type');
+    $indexName = $argvInput->getOption('index');
+    $typeName = $argvInput->getOption('type');
     $treeLevels = $argvInput->getOption('treeLevels');
     $precision = $argvInput->getOption('precision');
     $tree = $argvInput->getArgument('tree');
+    
+    $tab = $argvInput->getOption('tab');
     
     if (!in_array($tree, [ 'quadtree', 'geohash' ]) ) {
         throw new \Exception(
@@ -92,117 +99,135 @@ $main = function () use ($argvInput) {
         );
     }
 
-    echo sprintf(
-        'Starting test on host %s:%s, using index %s and type %s, with tree %s using %s.',
-        $host,
-        $port,
-        $index,
-        $type,
-        $tree,
-        isset($treeLevels) ? 'treeLevels '.$treeLevels : 'precision '.$precision
-    ).PHP_EOL;
+    if (!$tab) {
+        echo sprintf(
+            'Starting test on host %s:%s, using index %s and type %s, with tree %s using %s.',
+            $host,
+            $port,
+            $indexName,
+            $typeName,
+            $tree,
+            isset($treeLevels) ? 'treeLevels '.$treeLevels : 'precision '.$precision
+        ).PHP_EOL;
+    }
     
     $elasticaClient = new Client(array(
         'host' => $host,
         'port' => $port
     ));
 
-    $index = $elasticaClient->getIndex($index);
+    $index = $elasticaClient->getIndex($indexName);
     
-    $type = $index->getType($type);
+    $type = $index->getType($typeName);
     
-    $doImport = function () use ($tree, $treeLevels, $precision, $index, $type) {
-        $file = __DIR__.'/france-geojson/departements/01/communes.geojson';
+    $file = __DIR__.'/france-geojson/departements/01/communes.geojson';
         
-        if ($index->exists()) {
-            $index->delete();
-        }
-        
-        $geoJsonMapping = [
-            'type' => 'geo_shape',
-            'tree' => $tree,
-        ];
-        
-        if (isset($treeLevels)) {
-            $geoJsonMapping['tree_levels'] = $treeLevels;
-        } else {
-            $geoJsonMapping['precision'] = $precision;
-        }
+    if ($index->exists()) {
+        $index->delete();
+    }
 
-        $index->create(
-            [
-                "mappings" => [
-                    "test" => [
-                        "dynamic" => "strict",
-                        "properties" => [
-                            'code' => [
-                                'type' => 'string',
-                                'index' => 'not_analyzed',
-                            ],
-                            'name' => [
-                                'type' => 'string',
-                                'index' => 'not_analyzed',
-                            ],
-                            'geoJson' => $geoJsonMapping,
+    $geoJsonMapping = [
+        'type' => 'geo_shape',
+        'tree' => $tree,
+    ];
+
+    if (isset($treeLevels)) {
+        $geoJsonMapping['tree_levels'] = $treeLevels;
+    } else {
+        $geoJsonMapping['precision'] = $precision;
+    }
+
+    $index->create(
+        [
+            "mappings" => [
+                "test" => [
+                    "dynamic" => "strict",
+                    "properties" => [
+                        'code' => [
+                            'type' => 'string',
+                            'index' => 'not_analyzed',
                         ],
+                        'name' => [
+                            'type' => 'string',
+                            'index' => 'not_analyzed',
+                        ],
+                        'geoJson' => $geoJsonMapping,
                     ],
                 ],
-            ]
-        );
+            ],
+        ]
+    );
+
+    $docs = [];
+
+    $totalFlushed = 0;
+
+    $flush = function () use ($type, &$docs, &$totalFlushed, $tab) {
+        $count = count($docs);
+
+        if (!$tab) {
+            echo 'Flushing '.$count.' documents.'.PHP_EOL;
+        }
+
+        $type->addDocuments($docs);
+
+        $totalFlushed += $count;
+
+        if (!$tab) {
+            echo 'Total flushed: '.$totalFlushed.' documents.'.PHP_EOL;
+        }
 
         $docs = [];
+    };
 
-        $totalFlushed = 0;
+    $addDoc = function (array $data) use ($flush, &$docs) {
+        $docs[] = new Document('', $data);
 
-        $flush = function () use ($type, &$docs, &$totalFlushed, $index) {
-            $count = count($docs);
-            
-            echo 'Flushing '.$count.' documents.'.PHP_EOL;
-            
-            $type->addDocuments($docs);
+        if (count($docs) % 1000 === 0) {
+            $flush();
+        }
+    };
 
-            $totalFlushed += $count;
+    $content = file_get_contents($file);
 
-            echo 'Total flushed: '.$totalFlushed.' documents.'.PHP_EOL;
+    $decoded = json_decode($content, true);
 
-            $docs = [];
-        };
+    $start = microtime(true);
 
-        $addDoc = function (array $data) use ($flush, &$docs) {
-            $docs[] = new Document('', $data);
+    foreach ($decoded['features'] as $feature) {        
+        $addDoc(
+            [
+                'code' => $feature['properties']['code'],
+                'name' => $feature['properties']['nom'],
+                'geoJson' => $feature['geometry'],
+            ]
+        );
+    }   
 
-            if (count($docs) % 1000 === 0) {
-                $flush();
-            }
-        };
+    $flush();
 
-        $content = file_get_contents($file);
+    $end = microtime(true) - $start;
 
-        $decoded = json_decode($content, true);
-        
-        $start = microtime(true);
-
-        foreach ($decoded['features'] as $feature) {        
-            $addDoc(
-                [
-                    'code' => $feature['properties']['code'],
-                    'name' => $feature['properties']['nom'],
-                    'geoJson' => $feature['geometry'],
-                ]
-            );
-        }   
-
-        $flush();
-        
-        $end = microtime(true) - $start;
-        
+    if (!$tab) {
         echo sprintf(
             'Done importing in %.4f seconds.',
             $end
         ).PHP_EOL;
-    };
-    
-    $doImport();
+    } else {
+        echo implode(
+            "\t",
+            [
+                $host,
+                $port,
+                $indexName,
+                $typeName,
+                $tree,
+                $treeLevels,
+                $precision,
+                round($end, 4)
+            ]
+        ).PHP_EOL;
+    }
 };
 
 $main();
